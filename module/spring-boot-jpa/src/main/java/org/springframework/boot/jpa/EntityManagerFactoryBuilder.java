@@ -223,7 +223,9 @@ public class EntityManagerFactoryBuilder {
 	/**
 	 * Set the {@link ManagedClassNameFilter} to apply on entity classes discovered
 	 * using the {@linkplain Builder#packages(String...) packages to scan} of the
-	 * {@linkplain Builder builders} created by this instance.
+	 * {@linkplain Builder builders} created by this instance. This filter is combined
+	 * with any {@linkplain Builder#excludePackages(String...) package exclusion} set
+	 * on a builder: a class is kept only if both accept it.
 	 * @param managedClassNameFilter a predicate to filter entity classes by name
 	 * @since 4.2.0
 	 * @see Builder#packages(String...)
@@ -306,6 +308,11 @@ public class EntityManagerFactoryBuilder {
 		 * discover} entity classes on the classpath. It is ignored when a
 		 * {@link PersistenceManagedTypes} is {@linkplain #managedTypes(PersistenceManagedTypes)
 		 * provided} explicitly, since managed types are then defined upfront.
+		 * <p>
+		 * This exclusion is applied in addition to any
+		 * {@linkplain EntityManagerFactoryBuilder#setManagedClassNameFilter(ManagedClassNameFilter)
+		 * class name filter} set on the builder: a class is kept only if both the
+		 * exclusion filter and the explicit filter accept it.
 		 * @param packagesToExclude packages to exclude
 		 * @return the builder for fluent usage
 		 * @see #packages(String...)
@@ -313,7 +320,29 @@ public class EntityManagerFactoryBuilder {
 		 * @since 4.2.0
 		 */
 		public Builder excludePackages(String @Nullable ... packagesToExclude) {
+			Assert.noNullElements(packagesToExclude, "'packagesToExclude' must not contain null elements");
 			this.packagesToExclude = packagesToExclude;
+			return this;
+		}
+
+		/**
+		 * The classes whose sub-packages should be excluded while scanning for
+		 * {@code @Entity} annotations. Equivalent to calling
+		 * {@link #excludePackages(String...) excludePackages} with the package of each
+		 * given class.
+		 * @param basePackageClasses the classes to use
+		 * @return the builder for fluent usage
+		 * @see #packages(Class<?>...)
+		 * @see #excludePackages(String...)
+		 * @since 4.2.0
+		 */
+		public Builder excludePackages(Class<?>... basePackageClasses) {
+			Assert.noNullElements(basePackageClasses, "'basePackageClasses' must not contain null elements");
+			Set<String> packages = new HashSet<>();
+			for (Class<?> type : basePackageClasses) {
+				packages.add(ClassUtils.getPackageName(type));
+			}
+			this.packagesToExclude = StringUtils.toStringArray(packages);
 			return this;
 		}
 

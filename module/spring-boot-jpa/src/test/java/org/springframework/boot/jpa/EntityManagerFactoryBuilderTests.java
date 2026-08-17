@@ -195,6 +195,17 @@ class EntityManagerFactoryBuilderTests {
 	}
 
 	@Test
+	void setManagedClassNameFilterIsAppliedWhenSet() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		ManagedClassNameFilter filter = (className) -> className.startsWith("org.springframework.boot.jpa.scanned");
+		builder.setManagedClassNameFilter(filter);
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.packages("org.springframework.boot.jpa.scanned")
+			.build();
+		assertThat(extractManagedClassNameFilter(factory)).isSameAs(filter);
+	}
+
+	@Test
 	void excludePackagesCombinedWithManagedClassNameFilter() {
 		EntityManagerFactoryBuilder builder = createEmptyBuilder();
 		builder.setManagedClassNameFilter((className) -> className.startsWith("org.springframework.boot.jpa.scanned"));
@@ -210,7 +221,41 @@ class EntityManagerFactoryBuilderTests {
 	}
 
 	@Test
-	void excludePackagesIsIgnoredWhenManagedTypesIsProvided() {
+	void excludePackagesMultipleValuesExcludesAllOfThem() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		ManagedClassNameFilter filter = extractManagedClassNameFilter(builder.dataSource(mock())
+			.packages("org.springframework.boot.jpa.scanned")
+			.excludePackages("org.springframework.boot.jpa.scanned.excluded", "org.springframework.boot.jpa.scanned.other")
+			.build());
+		assertThat(filter.matches(ExcludedEntity.class.getName())).isFalse();
+		assertThat(filter.matches(NestedExcludedEntity.class.getName())).isFalse();
+		assertThat(filter.matches(IncludedEntity.class.getName())).isTrue();
+	}
+
+	@Test
+	void excludePackagesByBasePackageClassUsesTheirPackages() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		ManagedClassNameFilter filter = extractManagedClassNameFilter(builder.dataSource(mock())
+			.packages("org.springframework.boot.jpa.scanned")
+			.excludePackages(ExcludedEntity.class)
+			.build());
+		assertThat(filter).isNotNull();
+		assertThat(filter.matches(ExcludedEntity.class.getName())).isFalse();
+		assertThat(filter.matches(IncludedEntity.class.getName())).isTrue();
+	}
+
+	@Test
+	void excludePackagesWithEmptyArrayDoesNotConfigureAFilter() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.packages(IncludedEntity.class)
+			.excludePackages(new String[0])
+			.build();
+		assertThat(extractManagedClassNameFilter(factory)).isNull();
+	}
+
+	@Test
+	void excludePackagesHasNoEffectWhenManagedTypesIsProvided() {
 		EntityManagerFactoryBuilder builder = createEmptyBuilder();
 		PersistenceManagedTypes managedTypes = PersistenceManagedTypes.of(IncludedEntity.class.getName());
 		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
