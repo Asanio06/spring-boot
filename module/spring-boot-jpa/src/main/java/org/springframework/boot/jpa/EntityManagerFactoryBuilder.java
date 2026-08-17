@@ -37,6 +37,7 @@ import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.orm.jpa.JpaVendorAdapter;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 import org.springframework.orm.jpa.LocalEntityManagerFactoryBean;
+import org.springframework.orm.jpa.persistenceunit.ManagedClassNameFilter;
 import org.springframework.orm.jpa.persistenceunit.PersistenceManagedTypes;
 import org.springframework.orm.jpa.persistenceunit.PersistenceUnitManager;
 import org.springframework.orm.jpa.persistenceunit.PersistenceUnitPostProcessor;
@@ -75,6 +76,8 @@ public class EntityManagerFactoryBuilder {
 	private @Nullable List<PersistenceUnitPostProcessor> persistenceUnitPostProcessors;
 
 	private @Nullable Supplier<@Nullable ? extends RuntimeException> requireBootstrapExecutorExceptionSupplier;
+
+	private @Nullable ManagedClassNameFilter managedClassNameFilter;
 
 	/**
 	 * Create a new instance passing in the common pieces that will be shared if multiple
@@ -218,6 +221,19 @@ public class EntityManagerFactoryBuilder {
 	}
 
 	/**
+	 * Set the {@link ManagedClassNameFilter} to apply on entity classes discovered
+	 * using the {@linkplain Builder#packages(String...) packages to scan} of the
+	 * {@linkplain Builder builders} created by this instance.
+	 * @param managedClassNameFilter a predicate to filter entity classes by name
+	 * @since 4.2.0
+	 * @see Builder#packages(String...)
+	 * @see Builder#excludePackages(String...)
+	 */
+	public void setManagedClassNameFilter(ManagedClassNameFilter managedClassNameFilter) {
+		this.managedClassNameFilter = managedClassNameFilter;
+	}
+
+	/**
 	 * A fluent builder for a LocalContainerEntityManagerFactoryBean.
 	 */
 	public final class Builder {
@@ -227,6 +243,8 @@ public class EntityManagerFactoryBuilder {
 		private @Nullable PersistenceManagedTypes managedTypes;
 
 		private String @Nullable [] packagesToScan;
+
+		private String @Nullable [] packagesToExclude;
 
 		private @Nullable String persistenceUnit;
 
@@ -274,6 +292,28 @@ public class EntityManagerFactoryBuilder {
 				packages.add(ClassUtils.getPackageName(type));
 			}
 			this.packagesToScan = StringUtils.toStringArray(packages);
+			return this;
+		}
+
+		/**
+		 * The names of sub-packages to exclude while scanning for {@code @Entity}
+		 * annotations. Classes located in one of the excluded packages, or in any of
+		 * their sub-packages, are not added to the set of managed types.
+		 * <p>
+		 * This only has an effect when
+		 * {@linkplain #packages(String...) packages to scan} are used to
+		 * {@linkplain LocalContainerEntityManagerFactoryBean#setPackagesToScan(String...)
+		 * discover} entity classes on the classpath. It is ignored when a
+		 * {@link PersistenceManagedTypes} is {@linkplain #managedTypes(PersistenceManagedTypes)
+		 * provided} explicitly, since managed types are then defined upfront.
+		 * @param packagesToExclude packages to exclude
+		 * @return the builder for fluent usage
+		 * @see #packages(String...)
+		 * @see #managedTypes(PersistenceManagedTypes)
+		 * @since 4.2.0
+		 */
+		public Builder excludePackages(String @Nullable ... packagesToExclude) {
+			this.packagesToExclude = packagesToExclude;
 			return this;
 		}
 
@@ -344,6 +384,7 @@ public class EntityManagerFactoryBuilder {
 			map.from(this.dataSource).to((!this.jta) ? factory::setDataSource : factory::setJtaDataSource);
 			map.from(this.managedTypes).to(factory::setManagedTypes);
 			map.from(this.packagesToScan).to(factory::setPackagesToScan);
+			map.from(this::managedClassNameFilter).to(factory::setManagedClassNameFilter);
 			map.from(this::jpaPropertyMap).to(factory.getJpaPropertyMap()::putAll);
 			map.from(this.mappingResources).whenNot(ObjectUtils::isEmpty).to(factory::setMappingResources);
 			map.from(EntityManagerFactoryBuilder.this.persistenceUnitRootLocation)
@@ -376,6 +417,27 @@ public class EntityManagerFactoryBuilder {
 				throw (ex != null) ? ex : new IllegalStateException("A bootstrap executor is required");
 			}
 			return null;
+		}
+
+		private @Nullable ManagedClassNameFilter managedClassNameFilter() {
+			@Nullable ManagedClassNameFilter filter = EntityManagerFactoryBuilder.this.managedClassNameFilter;
+			if (!ObjectUtils.isEmpty(this.packagesToExclude)) {
+				Set<String> excludedPackages = new HashSet<>(Arrays.asList(this.packagesToExclude));
+				ManagedClassNameFilter packageFilter = (className) -> isNotExcluded(className, excludedPackages);
+				ManagedClassNameFilter current = filter;
+				filter = (current != null)
+						? (className) -> (packageFilter.matches(className) && current.matches(className)) : packageFilter;
+			}
+			return filter;
+		}
+
+		private boolean isNotExcluded(String className, Set<String> excludedPackages) {
+			for (String excludedPackage : excludedPackages) {
+				if (className.startsWith(excludedPackage + ".")) {
+					return false;
+				}
+			}
+			return true;
 		}
 
 	}

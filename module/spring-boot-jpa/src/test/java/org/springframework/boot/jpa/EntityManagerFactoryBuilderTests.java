@@ -17,6 +17,7 @@
 package org.springframework.boot.jpa;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
@@ -29,10 +30,19 @@ import org.assertj.core.api.InstanceOfAssertFactories;
 import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
+import org.springframework.boot.jpa.scanned.IncludedEntity;
+import org.springframework.boot.jpa.scanned.excluded.ExcludedEntity;
+import org.springframework.boot.jpa.scanned.excluded.nested.NestedExcludedEntity;
+import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.core.task.SimpleAsyncTaskExecutor;
+import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
+import org.springframework.orm.jpa.persistenceunit.ManagedClassNameFilter;
+import org.springframework.orm.jpa.persistenceunit.PersistenceManagedTypes;
+import org.springframework.orm.jpa.persistenceunit.PersistenceManagedTypesScanner;
 import org.springframework.orm.jpa.persistenceunit.PersistenceUnitPostProcessor;
 import org.springframework.orm.jpa.vendor.AbstractJpaVendorAdapter;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
@@ -145,6 +155,81 @@ class EntityManagerFactoryBuilderTests {
 		DataSource dataSource = mock();
 		builder.dataSource(dataSource).build();
 		assertThat(invoked).isFalse();
+	}
+
+	@Test
+	void excludePackagesWhenEmptyDoesNotConfigureAFilter() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.packages(IncludedEntity.class)
+			.excludePackages((String[]) null)
+			.build();
+		assertThat(factory).extracting("internalPersistenceUnitManager").extracting("managedClassNameFilter")
+			.isNull();
+	}
+
+	@Test
+	void excludePackagesFiltersExcludedEntitiesFromScan() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.packages("org.springframework.boot.jpa.scanned")
+			.excludePackages("org.springframework.boot.jpa.scanned.excluded")
+			.build();
+		ManagedClassNameFilter filter = extractManagedClassNameFilter(factory);
+		assertThat(filter).isNotNull();
+		assertThat(scanManagedTypes(filter)).containsExactly(IncludedEntity.class.getName());
+	}
+
+	@Test
+	void excludePackagesAlsoExcludesSubPackages() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.packages("org.springframework.boot.jpa.scanned")
+			.excludePackages("org.springframework.boot.jpa.scanned.excluded")
+			.build();
+		ManagedClassNameFilter filter = extractManagedClassNameFilter(factory);
+		assertThat(filter).isNotNull();
+		assertThat(filter.matches(ExcludedEntity.class.getName())).isFalse();
+		assertThat(filter.matches(NestedExcludedEntity.class.getName())).isFalse();
+		assertThat(filter.matches(IncludedEntity.class.getName())).isTrue();
+	}
+
+	@Test
+	void excludePackagesCombinedWithManagedClassNameFilter() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		builder.setManagedClassNameFilter((className) -> className.startsWith("org.springframework.boot.jpa.scanned"));
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.packages("org.springframework.boot.jpa.scanned")
+			.excludePackages("org.springframework.boot.jpa.scanned.excluded")
+			.build();
+		ManagedClassNameFilter filter = extractManagedClassNameFilter(factory);
+		assertThat(filter).isNotNull();
+		assertThat(filter.matches(IncludedEntity.class.getName())).isTrue();
+		assertThat(filter.matches(ExcludedEntity.class.getName())).isFalse();
+		assertThat(filter.matches("com.example.OutsideEntity")).isFalse();
+	}
+
+	@Test
+	void excludePackagesIsIgnoredWhenManagedTypesIsProvided() {
+		EntityManagerFactoryBuilder builder = createEmptyBuilder();
+		PersistenceManagedTypes managedTypes = PersistenceManagedTypes.of(IncludedEntity.class.getName());
+		LocalContainerEntityManagerFactoryBean factory = builder.dataSource(mock())
+			.managedTypes(managedTypes)
+			.excludePackages("org.springframework.boot.jpa.scanned.excluded")
+			.build();
+		Object persistenceUnitManager = ReflectionTestUtils.getField(factory, "internalPersistenceUnitManager");
+		assertThat(ReflectionTestUtils.getField(persistenceUnitManager, "managedTypes")).isSameAs(managedTypes);
+	}
+
+	private ManagedClassNameFilter extractManagedClassNameFilter(LocalContainerEntityManagerFactoryBean factory) {
+		Object persistenceUnitManager = ReflectionTestUtils.getField(factory, "internalPersistenceUnitManager");
+		return (ManagedClassNameFilter) ReflectionTestUtils.getField(persistenceUnitManager, "managedClassNameFilter");
+	}
+
+	private List<String> scanManagedTypes(ManagedClassNameFilter filter) {
+		PersistenceManagedTypes managedTypes = new PersistenceManagedTypesScanner(new DefaultResourceLoader(), filter)
+			.scan("org.springframework.boot.jpa.scanned");
+		return managedTypes.getManagedClassNames();
 	}
 
 	private EntityManagerFactoryBuilder createEmptyBuilder() {
